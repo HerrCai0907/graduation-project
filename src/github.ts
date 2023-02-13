@@ -3,7 +3,7 @@ import { Octokit } from "octokit";
 import { env } from "process";
 import { GITHUB_TOKEN } from "../secret/token";
 import { logSuccess } from "./log";
-import { neo4jCreateNode } from "./neo4j";
+import { neo4jCreateNode, neo4jRun } from "./neo4j";
 
 const octokit = new Octokit({
   auth: GITHUB_TOKEN,
@@ -18,17 +18,20 @@ const octokit = new Octokit({
   },
 });
 
-export type Issue = {
+type Issue = {
   name: string;
-  title: string;
-  submitter: string | null;
+  submitter: string;
   state: string;
-  created_at: string;
-  closed_at: string | null;
+  totalTime: number;
+};
+
+type Submitter = {
+  name: string;
 };
 
 export async function createIssueList() {
   let pageIndex = 0;
+  let submitterNodes = new Map<string, Submitter>();
   for (;;) {
     const { data } = await octokit.rest.issues.listForRepo({
       owner: "AssemblyScript",
@@ -37,27 +40,29 @@ export async function createIssueList() {
       per_page: 100,
       page: pageIndex++,
     });
-    let nodes: Issue[] = [];
+    let issueNodes = new Array<Issue>();
     for (const d of data) {
-      nodes.push({
+      const endDate = new Date(d.closed_at ?? Date.now());
+      const startDate = new Date(d.created_at);
+      const deltaDate = endDate.getTime() - startDate.getTime();
+      issueNodes.push({
         name: `issue-${d.number}`,
-        title: d.title,
-        submitter: d.user?.login ?? null,
+        submitter: d.user?.login ?? "unknown",
         state: d.state,
-        created_at: d.created_at,
-        closed_at: d.closed_at,
+        totalTime: Math.ceil(deltaDate / 1000 / 60 / 60 / 24),
       });
+      if (d.user != undefined && !submitterNodes.has(d.user.login)) {
+        submitterNodes.set(d.user.login, { name: d.user.login });
+      }
     }
-    if (nodes.length == 0) {
+    if (issueNodes.length == 0) {
       break;
     }
-    logSuccess(`fetch ${nodes.length} issues from github`);
-    await neo4jCreateNode(
-      nodes.map(
-        (n) =>
-          `:Issue {name:"${n.name}", submitter:"${n.submitter}", state:"${n.state}", create_time:"${n.created_at}", close_time:"${n.closed_at}"}  `
-      )
-    );
-    break;
+    logSuccess(`fetch ${issueNodes.length} issues from github`);
+    await neo4jCreateNode("Issue", issueNodes);
   }
+  await neo4jCreateNode("Person", [...submitterNodes.values()]);
+  await neo4jRun(
+    "match (n:Issue),(b:Person) where n.submitter=b.name create (b)-[r:Submit]->(n)"
+  );
 }

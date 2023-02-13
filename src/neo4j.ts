@@ -7,18 +7,31 @@ const driver = neo4j.driver(
   neo4j.auth.basic("neo4j", "password")
 );
 
-export async function neo4jCreateNode(node: string | string[]) {
-  node = [node].flat();
-  assert(node.length > 0);
-  const cmd = "CREATE " + node.map((n) => `(${n})`).join(",");
-  await _neo4jRun(cmd);
+export async function neo4jCreateNode<
+  T extends Record<string, string | number>
+>(label: string, props: T[]) {
+  const cmds = new Array<string>();
+  for (const prop of props) {
+    let propsStrings = new Array<string>();
+    for (const k in prop) {
+      const v = prop[k];
+      if (typeof v == "string") {
+        propsStrings.push(`${k}:"${v}"`);
+      } else {
+        propsStrings.push(`${k}:${v}`);
+      }
+    }
+    cmds.push(`(:${label} {${propsStrings.join(",")}})`);
+  }
+  let cmd = "CREATE " + cmds.join(",");
+  await neo4jRun(cmd);
 }
 
 export async function clear() {
-  await _neo4jRun("match (r) detach delete r");
+  await neo4jRun("match (r) detach delete r");
 }
 
-async function _neo4jRun(cmd: string) {
+export async function neo4jRun(cmd: string) {
   const session = driver.session();
   try {
     await session.run(cmd);
