@@ -1,10 +1,21 @@
+import { HttpsProxyAgent } from "hpagent";
 import { Octokit } from "octokit";
+import { env } from "process";
 import { GITHUB_TOKEN } from "../secret/token";
 import { logSuccess } from "./log";
 import { neo4jCreateNode } from "./neo4j";
 
 const octokit = new Octokit({
   auth: GITHUB_TOKEN,
+  request: {
+    agent:
+      env["https_proxy"] != undefined
+        ? new HttpsProxyAgent({
+            keepAlive: true,
+            proxy: env["https_proxy"],
+          })
+        : undefined,
+  },
 });
 
 export type Issue = {
@@ -47,5 +58,6 @@ export async function createIssueList() {
           `:Issue {name:"${n.name}", submitter:"${n.submitter}", state:"${n.state}", create_time:"${n.created_at}", close_time:"${n.closed_at}"}  `
       )
     );
+    break;
   }
 }
